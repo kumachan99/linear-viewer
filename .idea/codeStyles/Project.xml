@@ -1,0 +1,25 @@
+<component name="ProjectCodeStyleConfiguration">
+  <code_scheme name="Project" version="173">
+    <GoCodeStyleSettings>
+      <option name="ADD_LEADING_SPACE_TO_COMMENTS" value="true" />
+      <option name="LOCAL_PACKAGE_PREFIXES" />
+    </GoCodeStyleSettings>
+    <JetCodeStyleSettings>
+      <option name="CODE_STYLE_DEFAULTS" value="KOTLIN_OFFICIAL" />
+    </JetCodeStyleSettings>
+    <SqlCodeStyleSettings version="7">
+      <option name="KEYWORD_CASE" value="2" />
+      <option name="INSERT_MATRIX_ALIGN" value="true" />
+      <option name="WITH_ALIGN_AS" value="true" />
+      <option name="FROM_ALIGN_JOIN_TABLES" value="true" />
+      <option name="FROM_ALIGN_ALIASES" value="true" />
+      <option name="EXPR_CASE_THEN_ALIGN" value="true" />
+    </SqlCodeStyleSettings>
+    <editorconfig>
+      <option name="ENABLED" value="false" />
+    </editorconfig>
+    <codeStyleSettings language="kotlin">
+      <option name="CODE_STYLE_DEFAULTS" value="KOTLIN_OFFICIAL" />
+    </codeStyleSettings>
+  </code_scheme>
+</component>

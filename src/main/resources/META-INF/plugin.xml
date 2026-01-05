@@ -1,0 +1,89 @@
+<idea-plugin>
+    <id>com.github.kumachan99.linear-viewer</id>
+    <name>Linear Viewer</name>
+    <vendor email="kumachan99@users.noreply.github.com" url="https://github.com/kumachan99/linear-viewer">kumachan99</vendor>
+    <version>1.0.0</version>
+
+    <description><![CDATA[
+    <p>View and manage <a href="https://linear.app">Linear</a> issues directly from your JetBrains IDE.</p>
+
+    <h3>Features</h3>
+    <ul>
+        <li><b>Issue List</b> - View your assigned issues in a dedicated tool window</li>
+        <li><b>Filtering</b> - Filter by status (Started, Unstarted, Backlog, etc.) and project</li>
+        <li><b>Sorting</b> - Sort by updated date, priority, status, or created date</li>
+        <li><b>Issue Details</b> - Double-click to view issue details with Markdown rendering</li>
+        <li><b>Comments</b> - View issue comments in the detail dialog</li>
+        <li><b>Copy Branch Name</b> - Customizable branch name format with placeholders</li>
+        <li><b>Open in Browser</b> - Quick access to Linear web interface</li>
+    </ul>
+
+    <h3>Getting Started</h3>
+    <ol>
+        <li>Get your Linear API key from <a href="https://linear.app/settings/api">Linear Settings</a></li>
+        <li>Go to Settings → Tools → Linear and enter your API key</li>
+        <li>Open the Linear tool window from the right sidebar</li>
+    </ol>
+
+    <hr/>
+
+    <p><a href="https://linear.app">Linear</a>のIssueをJetBrains IDEから直接閲覧・管理できるプラグインです。</p>
+
+    <h3>機能</h3>
+    <ul>
+        <li><b>Issue一覧</b> - 担当Issueを専用ツールウィンドウで表示</li>
+        <li><b>フィルタリング</b> - ステータス（Started, Unstarted, Backlogなど）やプロジェクトで絞り込み</li>
+        <li><b>ソート</b> - 更新日、優先度、ステータス、作成日で並び替え</li>
+        <li><b>Issue詳細</b> - ダブルクリックでMarkdownレンダリング付きの詳細を表示</li>
+        <li><b>コメント</b> - Issue詳細ダイアログでコメントを閲覧</li>
+        <li><b>ブランチ名コピー</b> - プレースホルダーでカスタマイズ可能なブランチ名形式</li>
+        <li><b>ブラウザで開く</b> - Linear Webインターフェースへのクイックアクセス</li>
+    </ul>
+
+    <h3>使い方</h3>
+    <ol>
+        <li><a href="https://linear.app/settings/api">Linear Settings</a>からAPIキーを取得</li>
+        <li>Settings → Tools → Linear でAPIキーを設定</li>
+        <li>右サイドバーからLinearツールウィンドウを開く</li>
+    </ol>
+    ]]></description>
+
+    <change-notes><![CDATA[
+    <h3>1.0.0</h3>
+    <ul>
+        <li>Initial release / 初回リリース</li>
+        <li>Issue list with filtering and sorting / フィルタリング・ソート付きIssue一覧</li>
+        <li>Issue detail dialog with Markdown rendering / Markdownレンダリング付きIssue詳細ダイアログ</li>
+        <li>Comments support / コメント表示対応</li>
+        <li>Customizable branch name format / カスタマイズ可能なブランチ名形式</li>
+    </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Tool Window for Issue List -->
+        <toolWindow id="Linear"
+                    anchor="right"
+                    icon="/icons/Linear Icon.svg"
+                    factoryClass="com.github.linearviewer.toolwindow.LinearToolWindowFactory"/>
+
+        <!-- Settings -->
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.github.linearviewer.settings.LinearSettingsConfigurable"
+                id="com.github.linearviewer.settings.LinearSettingsConfigurable"
+                displayName="Linear"/>
+
+        <applicationService
+                serviceImplementation="com.github.linearviewer.settings.LinearSettings"/>
+
+        <applicationService
+                serviceImplementation="com.github.linearviewer.api.LinearApiService"/>
+
+        <notificationGroup id="Linear Notifications"
+                           displayType="BALLOON"
+                           key="notification.group.linear"/>
+    </extensions>
+
+</idea-plugin>
