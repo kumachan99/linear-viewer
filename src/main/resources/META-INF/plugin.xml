@@ -2,7 +2,7 @@
     <id>com.github.kumachan99.linear-viewer</id>
     <name>Linear Viewer</name>
     <vendor email="kumachan99@users.noreply.github.com" url="https://github.com/kumachan99/linear-viewer">kumachan99</vendor>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 
     <description><![CDATA[
     <p>View and manage <a href="https://linear.app">Linear</a> issues directly from your JetBrains IDE.</p>
@@ -49,6 +49,19 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>1.1.0</h3>
+    <ul>
+        <li><b>Status icons</b> - Visual icons for each status type (◉○◌✓✕) / ステータスアイコン追加</li>
+        <li><b>Priority icons</b> - Dot icon prefix for priority badges / 優先度に●アイコン追加</li>
+        <li><b>Selection indicator</b> - Left edge color bar for selected rows / 選択行に左エッジカラーバー</li>
+        <li><b>Completed/Canceled styling</b> - Strikethrough and muted colors / 完了・キャンセルに取消線</li>
+        <li><b>Sort order toggle</b> - Click same sort option to toggle ascending/descending / 昇順・降順の切り替え</li>
+        <li><b>Active filter chips</b> - Removable filter chips display / アクティブフィルター表示</li>
+        <li><b>Enhanced hover effects</b> - More visible hover state on list items / ホバーエフェクト強化</li>
+        <li><b>Badge hover effect</b> - Badges brighten on hover in detail dialog / バッジホバー効果</li>
+        <li><b>Comments order</b> - Comments sorted by newest first / コメント新しい順表示</li>
+        <li><b>Refresh animation</b> - Icon changes during loading / 読み込み中のアイコン変化</li>
+    </ul>
     <h3>1.0.0</h3>
     <ul>
         <li>Initial release / 初回リリース</li>

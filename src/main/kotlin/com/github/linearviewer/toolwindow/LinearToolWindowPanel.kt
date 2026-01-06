@@ -25,6 +25,7 @@ import java.awt.*
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import java.util.concurrent.CompletableFuture
 import javax.swing.*
 
@@ -44,6 +45,11 @@ enum class StatusFilter(val displayName: String, val stateType: String?) {
     CANCELED("Canceled", "canceled")
 }
 
+enum class SortOrder(val displayName: String, val icon: javax.swing.Icon) {
+    DESCENDING("Descending", com.intellij.icons.AllIcons.General.ArrowDown),
+    ASCENDING("Ascending", com.intellij.icons.AllIcons.General.ArrowUp)
+}
+
 class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPanel(true, true) {
     private val issueListModel = DefaultListModel<Issue>()
     private val issueList = JBList(issueListModel)
@@ -51,8 +57,12 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
 
     private var allIssues: List<Issue> = emptyList()
     private var currentSort: SortOption = SortOption.UPDATED_AT
+    private var currentSortOrder: SortOrder = SortOrder.DESCENDING
     private var currentStatusFilter: StatusFilter = StatusFilter.ALL
     private var currentProjectFilter: String? = null
+    private var hoveredIndex: Int = -1
+    private var isLoading: Boolean = false
+    private lateinit var filterPanel: JPanel
 
     init {
         setupUI()
@@ -61,7 +71,7 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
     }
 
     private fun setupUI() {
-        issueList.cellRenderer = IssueListCellRenderer()
+        issueList.cellRenderer = IssueListCellRenderer { hoveredIndex }
         issueList.selectionMode = ListSelectionModel.SINGLE_SELECTION
 
         // Double-click to show detail dialog
@@ -71,6 +81,25 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
                     val selectedIssue = issueList.selectedValue
                     selectedIssue?.let { showIssueDetailDialog(it) }
                 }
+            }
+        })
+
+        // Hover effect - track mouse position
+        issueList.addMouseMotionListener(object : MouseMotionAdapter() {
+            override fun mouseMoved(e: MouseEvent) {
+                val index = issueList.locationToIndex(e.point)
+                if (hoveredIndex != index) {
+                    hoveredIndex = index
+                    issueList.repaint()
+                }
+            }
+        })
+
+        // Clear hover when mouse exits
+        issueList.addMouseListener(object : MouseAdapter() {
+            override fun mouseExited(e: MouseEvent) {
+                hoveredIndex = -1
+                issueList.repaint()
             }
         })
 
@@ -93,6 +122,14 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
         })
 
         val mainPanel = JPanel(BorderLayout())
+
+        // Filter display panel (shows active filters)
+        filterPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+            border = JBUI.Borders.empty(4, 8)
+            isVisible = false
+        }
+        mainPanel.add(filterPanel, BorderLayout.NORTH)
+
         mainPanel.add(JBScrollPane(issueList), BorderLayout.CENTER)
 
         val bottomPanel = JPanel(BorderLayout()).apply {
@@ -102,6 +139,73 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
         mainPanel.add(bottomPanel, BorderLayout.SOUTH)
 
         setContent(mainPanel)
+    }
+
+    private fun updateFilterPanel() {
+        filterPanel.removeAll()
+
+        val hasFilters = currentStatusFilter != StatusFilter.ALL || currentProjectFilter != null
+
+        if (hasFilters) {
+            filterPanel.add(JBLabel("Filters:").apply {
+                foreground = JBColor.namedColor("Label.infoForeground", JBColor.GRAY)
+            })
+
+            // Status filter chip
+            if (currentStatusFilter != StatusFilter.ALL) {
+                filterPanel.add(createFilterChip("Status: ${currentStatusFilter.displayName}") {
+                    currentStatusFilter = StatusFilter.ALL
+                    applyFiltersAndSort()
+                })
+            }
+
+            // Project filter chip
+            currentProjectFilter?.let { project ->
+                filterPanel.add(createFilterChip("Project: $project") {
+                    currentProjectFilter = null
+                    applyFiltersAndSort()
+                })
+            }
+        }
+
+        filterPanel.isVisible = hasFilters
+        filterPanel.revalidate()
+        filterPanel.repaint()
+    }
+
+    private fun createFilterChip(text: String, onRemove: () -> Unit): JComponent {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
+            isOpaque = true
+            background = JBColor.namedColor("ActionButton.hoverBackground", JBColor(0xE8E8E8, 0x3C3F41))
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.namedColor("Borders.color", JBColor(0xD0D0D0, 0x4A4A4A)), 1),
+                JBUI.Borders.empty(2, 6)
+            )
+        }
+
+        chip.add(JBLabel(text).apply {
+            font = font.deriveFont(11f)
+        })
+
+        val removeButton = JBLabel("×").apply {
+            font = font.deriveFont(Font.BOLD, 12f)
+            foreground = JBColor.namedColor("Label.infoForeground", JBColor.GRAY)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    onRemove()
+                }
+                override fun mouseEntered(e: MouseEvent) {
+                    foreground = JBColor.namedColor("Label.errorForeground", JBColor.RED)
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    foreground = JBColor.namedColor("Label.infoForeground", JBColor.GRAY)
+                }
+            })
+        }
+        chip.add(removeButton)
+
+        return chip
     }
 
     private fun showIssueDetailDialog(issue: Issue) {
@@ -195,28 +299,50 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
 
     private fun setupToolbar() {
         val actionGroup = DefaultActionGroup().apply {
-            // Refresh action
+            // Refresh action with loading state
             add(object : AnAction("Refresh", "Refresh issues", com.intellij.icons.AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
                     refreshIssues()
                 }
+
+                override fun update(e: AnActionEvent) {
+                    e.presentation.isEnabled = !isLoading
+                    e.presentation.icon = if (isLoading)
+                        com.intellij.icons.AllIcons.Actions.ForceRefresh
+                    else
+                        com.intellij.icons.AllIcons.Actions.Refresh
+                }
+
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
             })
 
             addSeparator()
 
-            // Sort options as dropdown
+            // Sort options as dropdown (click same option to toggle order)
             val sortGroup = DefaultActionGroup("Sort By", true).apply {
                 templatePresentation.icon = com.intellij.icons.AllIcons.General.ArrowDown
                 SortOption.entries.forEach { option ->
                     add(object : AnAction(option.displayName) {
                         override fun actionPerformed(e: AnActionEvent) {
-                            currentSort = option
+                            if (currentSort == option) {
+                                // Toggle sort order when clicking same option
+                                currentSortOrder = if (currentSortOrder == SortOrder.DESCENDING)
+                                    SortOrder.ASCENDING else SortOrder.DESCENDING
+                            } else {
+                                currentSort = option
+                                currentSortOrder = SortOrder.DESCENDING  // Reset to default
+                            }
                             applyFiltersAndSort()
                         }
 
                         override fun update(e: AnActionEvent) {
-                            e.presentation.icon = if (currentSort == option)
-                                com.intellij.icons.AllIcons.Actions.Checked else null
+                            e.presentation.icon = when {
+                                currentSort == option && currentSortOrder == SortOrder.DESCENDING ->
+                                    com.intellij.icons.AllIcons.General.ArrowDown
+                                currentSort == option && currentSortOrder == SortOrder.ASCENDING ->
+                                    com.intellij.icons.AllIcons.General.ArrowUp
+                                else -> null
+                            }
                         }
 
                         override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -317,23 +443,46 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
             filtered = filtered.filter { it.project?.name == projectName }
         }
 
-        // Apply sort
+        // Apply sort with order
         filtered = when (currentSort) {
-            SortOption.UPDATED_AT -> filtered.sortedByDescending { it.updatedAt }
-            SortOption.CREATED_AT -> filtered.sortedByDescending { it.createdAt }
-            SortOption.PRIORITY -> filtered.sortedBy {
-                if (it.priority == 0) Int.MAX_VALUE else it.priority
+            SortOption.UPDATED_AT -> {
+                if (currentSortOrder == SortOrder.DESCENDING)
+                    filtered.sortedByDescending { it.updatedAt }
+                else
+                    filtered.sortedBy { it.updatedAt }
             }
-            SortOption.STATUS -> filtered.sortedBy { it.state?.name ?: "zzz" }
+            SortOption.CREATED_AT -> {
+                if (currentSortOrder == SortOrder.DESCENDING)
+                    filtered.sortedByDescending { it.createdAt }
+                else
+                    filtered.sortedBy { it.createdAt }
+            }
+            SortOption.PRIORITY -> {
+                if (currentSortOrder == SortOrder.DESCENDING) {
+                    // Descending: Urgent first (1 -> 4), No priority last
+                    filtered.sortedBy { if (it.priority == 0) Int.MAX_VALUE else it.priority }
+                } else {
+                    // Ascending: Low first (4 -> 1), No priority last
+                    filtered.sortedByDescending { if (it.priority == 0) Int.MIN_VALUE else it.priority }
+                }
+            }
+            SortOption.STATUS -> {
+                if (currentSortOrder == SortOrder.DESCENDING)
+                    filtered.sortedByDescending { it.state?.name ?: "" }
+                else
+                    filtered.sortedBy { it.state?.name ?: "zzz" }
+            }
         }
 
         // Update UI
         issueListModel.clear()
         filtered.forEach { issueListModel.addElement(it) }
         statusLabel.text = "${filtered.size} / ${allIssues.size} issues"
+        updateFilterPanel()
     }
 
     fun refreshIssues() {
+        isLoading = true
         statusLabel.text = "Loading..."
         issueListModel.clear()
 
@@ -348,6 +497,7 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
             }
         }.thenAccept { result ->
             ApplicationManager.getApplication().invokeLater {
+                isLoading = false
                 result.fold(
                     onSuccess = { issues ->
                         allIssues = issues
@@ -363,6 +513,7 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
             }
         }.exceptionally { throwable ->
             ApplicationManager.getApplication().invokeLater {
+                isLoading = false
                 statusLabel.text = "Error: ${throwable.message}"
             }
             null
@@ -370,7 +521,7 @@ class LinearToolWindowPanel(private val project: Project) : SimpleToolWindowPane
     }
 }
 
-class IssueListCellRenderer : ListCellRenderer<Issue> {
+class IssueListCellRenderer(private val getHoveredIndex: () -> Int) : ListCellRenderer<Issue> {
     override fun getListCellRendererComponent(
         list: JList<out Issue>,
         value: Issue,
@@ -378,8 +529,30 @@ class IssueListCellRenderer : ListCellRenderer<Issue> {
         isSelected: Boolean,
         cellHasFocus: Boolean
     ): Component {
+        val isHovered = index == getHoveredIndex() && !isSelected
+        val isCompletedOrCanceled = value.state?.type == "completed" || value.state?.type == "canceled"
+
         val panel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(8, 12)
+            // Increased padding and bottom border for cell separation
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.namedColor("Borders.color", JBColor(0xE5E5E5, 0x3C3C3C))),
+                JBUI.Borders.empty(12, 12)
+            )
+        }
+
+        // Left edge color bar for selected rows
+        if (isSelected) {
+            val colorBarWrapper = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyRight(8)  // Space between bar and content
+                val colorBar = JPanel().apply {
+                    preferredSize = Dimension(4, 0)
+                    background = getStateColor(value.state?.type)
+                    isOpaque = true
+                }
+                add(colorBar, BorderLayout.CENTER)
+            }
+            panel.add(colorBarWrapper, BorderLayout.WEST)
         }
 
         // Top row: identifier and title
@@ -388,8 +561,15 @@ class IssueListCellRenderer : ListCellRenderer<Issue> {
             foreground = if (isSelected) list.selectionForeground else JBColor.namedColor("Label.infoForeground", JBColor(0x5A5A5A, 0xABABAB))
         }
 
-        val titleLabel = JBLabel(value.title).apply {
-            foreground = if (isSelected) list.selectionForeground else list.foreground
+        // Title with strikethrough for completed/canceled issues
+        val titleLabel = JBLabel(
+            if (isCompletedOrCanceled) "<html><s>${value.title}</s></html>" else value.title
+        ).apply {
+            foreground = when {
+                isSelected -> list.selectionForeground
+                isCompletedOrCanceled -> JBColor(0x9CA3AF, 0x6B7280)  // Muted gray
+                else -> list.foreground
+            }
         }
 
         // Bottom row: status, priority, project
@@ -397,15 +577,16 @@ class IssueListCellRenderer : ListCellRenderer<Issue> {
             isOpaque = false
         }
 
-        // Status badge
+        // Status badge with icon
         value.state?.let { state ->
-            val stateLabel = createBadge(state.name, state.color)
+            val statusIcon = getStatusIcon(state.type)
+            val stateLabel = createBadge("$statusIcon ${state.name}", state.color)
             bottomPanel.add(stateLabel)
         }
 
-        // Priority badge
+        // Priority badge with dot icon
         if (value.priority > 0) {
-            val priorityText = Priority.toDisplayString(value.priority)
+            val priorityText = "● ${Priority.toDisplayString(value.priority)}"
             val priorityColor = getPriorityColor(value.priority)
             val priorityLabel = createBadge(priorityText, priorityColor)
             bottomPanel.add(priorityLabel)
@@ -428,15 +609,43 @@ class IssueListCellRenderer : ListCellRenderer<Issue> {
 
         panel.add(contentPanel, BorderLayout.CENTER)
 
-        if (isSelected) {
-            panel.background = list.selectionBackground
-            panel.isOpaque = true
-        } else {
-            panel.background = list.background
-            panel.isOpaque = true
+        // Background color based on state
+        when {
+            isSelected -> {
+                panel.background = list.selectionBackground
+            }
+            isHovered -> {
+                // More visible hover effect
+                val hoverColor = if (ColorUtil.isDark(list.background)) {
+                    JBColor(0x3C3F41, 0x3C3F41)  // Lighter for dark theme
+                } else {
+                    JBColor(0xE8E8E8, 0xE8E8E8)  // Darker for light theme
+                }
+                panel.background = hoverColor
+            }
+            else -> {
+                panel.background = list.background
+            }
         }
+        panel.isOpaque = true
 
         return panel
+    }
+
+    private fun getStatusIcon(stateType: String?): String = when (stateType) {
+        "started" -> "◉"      // In Progress
+        "unstarted" -> "○"    // Not Started
+        "backlog" -> "◌"      // Backlog
+        "completed" -> "✓"    // Completed
+        "canceled" -> "✕"     // Canceled
+        else -> "○"
+    }
+
+    private fun getStateColor(stateType: String?): Color = when (stateType) {
+        "started" -> JBColor(0x3B82F6, 0x60A5FA)     // Blue
+        "completed" -> JBColor(0x22C55E, 0x4ADE80)   // Green
+        "canceled" -> JBColor(0xEF4444, 0xF87171)    // Red
+        else -> JBColor(0x9CA3AF, 0x6B7280)          // Gray
     }
 
     private fun createRowPanel(left: JComponent, right: JComponent): JPanel {
@@ -521,62 +730,75 @@ class IssueDetailDialog(
     private fun createHeaderPanel(): JPanel {
         return JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.emptyBottom(12)
+            border = JBUI.Borders.empty(16, 0, 12, 0)
 
             // Identifier
             add(JBLabel(issue.identifier).apply {
                 foreground = JBColor.namedColor("Label.infoForeground", JBColor(0x5A5A5A, 0xABABAB))
-                font = font.deriveFont(12f)
+                font = font.deriveFont(11f)
                 alignmentX = Component.LEFT_ALIGNMENT
             })
 
             add(Box.createVerticalStrut(4))
 
             // Title
-            add(JBLabel("<html><body style='width: 650px'>${issue.title}</body></html>").apply {
+            add(JBLabel("<html><body style='width: 620px'>${issue.title}</body></html>").apply {
                 font = font.deriveFont(Font.BOLD, 18f)
+                alignmentX = Component.LEFT_ALIGNMENT
+            })
+
+            add(Box.createVerticalStrut(16))
+
+            // Separator line
+            add(JSeparator(SwingConstants.HORIZONTAL).apply {
+                maximumSize = Dimension(Int.MAX_VALUE, 1)
                 alignmentX = Component.LEFT_ALIGNMENT
             })
 
             add(Box.createVerticalStrut(12))
 
-            // Metadata row
-            val metaPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            // Metadata row - unified spacing (6px between badges)
+            val metaPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
                 alignmentX = Component.LEFT_ALIGNMENT
+                isOpaque = false
             }
 
-            // Status badge
+            // Status badge with icon
             issue.state?.let { state ->
-                metaPanel.add(createBadge(state.name, state.color))
+                val statusIcon = getStatusIcon(state.type)
+                metaPanel.add(createBadge("$statusIcon ${state.name}", state.color))
             }
 
-            // Priority badge
+            // Priority badge with dot icon
             if (issue.priority > 0) {
-                val priorityText = Priority.toDisplayString(issue.priority)
+                val priorityText = "● ${Priority.toDisplayString(issue.priority)}"
                 val priorityColor = getPriorityColor(issue.priority)
                 metaPanel.add(createBadge(priorityText, priorityColor))
             }
 
-            // Assignee
-            issue.assignee?.let { assignee ->
-                metaPanel.add(JBLabel("Assignee: ${assignee.name}").apply {
-                    foreground = JBColor.namedColor("Label.infoForeground", JBColor.GRAY)
-                })
-            }
-
-            // Project
+            // Project badge
             issue.project?.let { proj ->
                 metaPanel.add(createBadge(proj.name, proj.color ?: "#666666"))
             }
 
+            // Assignee (subtle text style)
+            issue.assignee?.let { assignee ->
+                metaPanel.add(Box.createHorizontalStrut(8))
+                metaPanel.add(JBLabel("@${assignee.name}").apply {
+                    foreground = JBColor.namedColor("Label.infoForeground", JBColor(0x6E6E6E, 0x9E9E9E))
+                    font = font.deriveFont(12f)
+                })
+            }
+
             add(metaPanel)
 
-            // Labels
+            // Labels - same spacing as metadata (6px)
             val labels = issue.labels?.nodes ?: emptyList()
             if (labels.isNotEmpty()) {
                 add(Box.createVerticalStrut(8))
-                val labelsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+                val labelsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
                     alignmentX = Component.LEFT_ALIGNMENT
+                    isOpaque = false
                 }
                 labels.forEach { label ->
                     labelsPanel.add(createBadge(label.name, label.color))
@@ -624,7 +846,7 @@ class IssueDetailDialog(
             border = JBUI.Borders.empty(8)
         }
 
-        comments.sortedBy { it.createdAt }.forEach { comment ->
+        comments.sortedByDescending { it.createdAt }.forEach { comment ->
             commentsPanel.add(createCommentCard(comment))
             commentsPanel.add(Box.createVerticalStrut(12))
         }
@@ -636,23 +858,37 @@ class IssueDetailDialog(
     }
 
     private fun createCommentCard(comment: Comment): JPanel {
+        val isDark = ColorUtil.isDark(JBColor.background())
+
         return JPanel(BorderLayout()).apply {
+            // Enhanced border - thicker and more visible
             border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(JBColor.namedColor("Borders.color", JBColor(0xD0D0D0, 0x4A4A4A)), 1),
-                JBUI.Borders.empty(12)
+                BorderFactory.createLineBorder(
+                    JBColor.namedColor("Borders.color", JBColor(0xC0C0C0, 0x505050)),
+                    1
+                ),
+                JBUI.Borders.empty(14)
             )
             isOpaque = true
-            background = JBColor.namedColor("Panel.background", JBColor.WHITE)
+            // Subtle background differentiation
+            background = if (isDark) {
+                JBColor(0x2D2D2D, 0x2D2D2D)
+            } else {
+                JBColor(0xFAFAFA, 0xFAFAFA)
+            }
 
             // Header: Author and date
             val headerPanel = JPanel(BorderLayout()).apply {
                 isOpaque = false
+                border = JBUI.Borders.emptyBottom(8)
+
                 val authorLabel = JBLabel(comment.user?.name ?: "Unknown").apply {
-                    font = font.deriveFont(Font.BOLD)
+                    font = font.deriveFont(Font.BOLD, 14f)
+                    foreground = if (isDark) JBColor(0xDDDDDD, 0xDDDDDD) else JBColor(0x333333, 0x333333)
                 }
                 val dateLabel = JBLabel(formatDate(comment.createdAt)).apply {
-                    foreground = JBColor.namedColor("Label.infoForeground", JBColor.GRAY)
-                    font = font.deriveFont(font.size - 1f)
+                    foreground = JBColor.namedColor("Label.infoForeground", JBColor(0x888888, 0x888888))
+                    font = font.deriveFont(11f)
                 }
                 add(authorLabel, BorderLayout.WEST)
                 add(dateLabel, BorderLayout.EAST)
@@ -665,7 +901,7 @@ class IssueDetailDialog(
                 text = wrapInHtmlStyle(bodyHtml)
                 isEditable = false
                 isOpaque = false
-                border = JBUI.Borders.emptyTop(8)
+                border = JBUI.Borders.empty()
                 addHyperlinkListener { e ->
                     if (e.eventType == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
                         openInBrowser(e.url.toString())
@@ -730,28 +966,54 @@ class IssueDetailDialog(
     }
 
     private fun createBadge(text: String, hexColor: String): JComponent {
-        val color = try {
+        val baseColor = try {
             ColorUtil.fromHex(hexColor.removePrefix("#"))
         } catch (e: Exception) {
             JBColor.GRAY
         }
 
         return object : JLabel(text) {
+            private var isHovered = false
+
             init {
                 font = font.deriveFont(font.size - 1f)
-                foreground = if (ColorUtil.isDark(color)) Color.WHITE else Color.BLACK
+                foreground = if (ColorUtil.isDark(baseColor)) Color.WHITE else Color.BLACK
                 border = JBUI.Borders.empty(3, 8)
+                cursor = Cursor.getDefaultCursor()
+
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) {
+                        isHovered = true
+                        repaint()
+                    }
+
+                    override fun mouseExited(e: MouseEvent) {
+                        isHovered = false
+                        repaint()
+                    }
+                })
             }
 
             override fun paintComponent(g: Graphics) {
+                val displayColor = if (isHovered) ColorUtil.brighter(baseColor, 2) else baseColor
+
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = color
+                g2.color = displayColor
                 g2.fillRoundRect(0, 0, width, height, 12, 12)
                 g2.dispose()
                 super.paintComponent(g)
             }
         }
+    }
+
+    private fun getStatusIcon(stateType: String?): String = when (stateType) {
+        "started" -> "◉"      // In Progress
+        "unstarted" -> "○"    // Not Started
+        "backlog" -> "◌"      // Backlog
+        "completed" -> "✓"    // Completed
+        "canceled" -> "✕"     // Canceled
+        else -> "○"
     }
 
     private fun getPriorityColor(priority: Int): String = when (priority) {
